@@ -26,6 +26,7 @@ from .top_down import (TopDownAicDataset, TopDownCocoDataset,
                        TopDownMpiiDataset, TopDownMpiiTrbDataset,
                        TopDownOCHumanDataset, TopDownPoseTrack18Dataset,
                        TopDownPoseTrack18VideoDataset)
+from .custom import AirDataset
 
 __all__ = [
     'TopDownCocoDataset', 'BottomUpCocoDataset', 'BottomUpMhpDataset',
@@ -45,5 +46,5 @@ __all__ = [
     'AnimalATRWDataset', 'AnimalPoseDataset', 'TopDownH36MDataset',
     'TopDownHalpeDataset', 'TopDownPoseTrack18VideoDataset',
     'Body3DMviewDirectPanopticDataset', 'Body3DMviewDirectShelfDataset',
-    'Body3DMviewDirectCampusDataset', 'NVGestureDataset'
+    'Body3DMviewDirectCampusDataset', 'NVGestureDataset','AirDataset'
 ]
