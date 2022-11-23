@@ -41,18 +41,66 @@ channel_cfg = dict(
     ])
 
 # model settings
+norm_cfg = dict(type='SyncBN', requires_grad=True)
 model = dict(
     type='TopDown',
-    pretrained='torchvision://resnet50',
-    backbone=dict(type='ResNet', depth=50, num_stages=4, out_indices=(3, )),
-    neck=dict(type='GlobalAveragePooling'),
+    pretrained='https://download.openmmlab.com/mmpose/'
+    'pretrain_models/hrformer_base-32815020_20220226.pth',
+    backbone=dict(
+        type='HRFormer',
+        in_channels=3,
+        norm_cfg=norm_cfg,
+        extra=dict(
+            drop_path_rate=0.2,
+            with_rpe=True,
+            stage1=dict(
+                num_modules=1,
+                num_branches=1,
+                block='BOTTLENECK',
+                num_blocks=(2, ),
+                num_channels=(64, ),
+                num_heads=[2],
+                mlp_ratios=[4]),
+            stage2=dict(
+                num_modules=1,
+                num_branches=2,
+                block='HRFORMERBLOCK',
+                num_blocks=(2, 2),
+                num_channels=(78, 156),
+                num_heads=[2, 4],
+                mlp_ratios=[4, 4],
+                window_sizes=[7, 7]),
+            stage3=dict(
+                num_modules=4,
+                num_branches=3,
+                block='HRFORMERBLOCK',
+                num_blocks=(2, 2, 2),
+                num_channels=(78, 156, 312),
+                num_heads=[2, 4, 8],
+                mlp_ratios=[4, 4, 4],
+                window_sizes=[7, 7, 7]),
+            stage4=dict(
+                num_modules=2,
+                num_branches=4,
+                block='HRFORMERBLOCK',
+                num_blocks=(2, 2, 2, 2),
+                num_channels=(78, 156, 312, 624),
+                num_heads=[2, 4, 8, 16],
+                mlp_ratios=[4, 4, 4, 4],
+                window_sizes=[7, 7, 7, 7]))),
     keypoint_head=dict(
-        type='DeepposeRegressionHead',
-        in_channels=2048,
-        num_joints=channel_cfg['num_output_channels'],
-        loss_keypoint=dict(type='SmoothL1Loss', use_target_weight=True)),
+        type='TopdownHeatmapSimpleHead',
+        in_channels=78,
+        out_channels=channel_cfg['num_output_channels'],
+        num_deconv_layers=0,
+        extra=dict(final_conv_kernel=1, ),
+        loss_keypoint=dict(type='JointsMSELoss', use_target_weight=True)),
     train_cfg=dict(),
-    test_cfg=dict(flip_test=True))
+    test_cfg=dict(
+        flip_test=True,
+        post_process='default',
+        shift_heatmap=True,
+        modulate_kernel=11))
 
 data_cfg = dict(
     image_size=[192, 256],
@@ -69,6 +117,7 @@ data_cfg = dict(
     det_bbox_thr=0.0,
     bbox_file='data/AirData/aircraft_detection_results/'
     'Air_val_detections.json',
+    # bbox_file = ''
 )
 
 train_pipeline = [
@@ -120,10 +169,10 @@ test_pipeline = val_pipeline
 
 data_root = 'data/AirData'
 data = dict(
-    samples_per_gpu=32,
+    samples_per_gpu=16,
     workers_per_gpu=2,
-    val_dataloader=dict(samples_per_gpu=32),
-    test_dataloader=dict(samples_per_gpu=32),
+    val_dataloader=dict(samples_per_gpu=16),
+    test_dataloader=dict(samples_per_gpu=16),
     train=dict(
         type='AirDataset',
         ann_file=f'{data_root}/annotations/keypoints_train.json',

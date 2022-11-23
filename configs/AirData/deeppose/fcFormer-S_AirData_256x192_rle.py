@@ -44,13 +44,24 @@ channel_cfg = dict(
 model = dict(
     type='TopDown',
     pretrained='torchvision://resnet50',
-    backbone=dict(type='ResNet', depth=50, num_stages=4, out_indices=(3, )),
-    neck=dict(type='GlobalAveragePooling'),
+    backbone=dict(type='ResNet', depth=50, num_stages=4, out_indices=(0, 1, 2, 3)),
+    neck=dict(
+        type='FpCFormer',
+        in_channels=[256,512,1024,2048],
+        embed_dims=[256,512,1024,2048],
+        num_layers=[1, 3, 4, 2],
+        return_map=True
+    ),
     keypoint_head=dict(
         type='DeepposeRegressionHead',
         in_channels=2048,
         num_joints=channel_cfg['num_output_channels'],
-        loss_keypoint=dict(type='SmoothL1Loss', use_target_weight=True)),
+        loss_keypoint=dict(
+            type='RLELoss',
+            use_target_weight=True,
+            size_average=True,
+            residual=True),
+        out_sigma=True),
     train_cfg=dict(),
     test_cfg=dict(flip_test=True))
 
@@ -69,6 +80,7 @@ data_cfg = dict(
     det_bbox_thr=0.0,
     bbox_file='data/AirData/aircraft_detection_results/'
     'Air_val_detections.json',
+    # bbox_file = ''
 )
 
 train_pipeline = [
@@ -120,10 +132,10 @@ test_pipeline = val_pipeline
 
 data_root = 'data/AirData'
 data = dict(
-    samples_per_gpu=32,
+    samples_per_gpu=4,
     workers_per_gpu=2,
-    val_dataloader=dict(samples_per_gpu=32),
-    test_dataloader=dict(samples_per_gpu=32),
+    val_dataloader=dict(samples_per_gpu=4),
+    test_dataloader=dict(samples_per_gpu=4),
     train=dict(
         type='AirDataset',
         ann_file=f'{data_root}/annotations/keypoints_train.json',
