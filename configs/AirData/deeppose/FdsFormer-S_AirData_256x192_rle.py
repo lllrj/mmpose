@@ -46,7 +46,7 @@ model = dict(
     pretrained='torchvision://resnet50',
     backbone=dict(type='ResNet', depth=50, num_stages=4, out_indices=(0, 1, 2, 3)),
     neck=dict(
-        type='FpCFormer',
+        type='FdsFormer',
         in_channels=[256,512,1024,2048],
         embed_dims=[256,512,1024,2048],
         num_layers=[1, 2, 4, 2],

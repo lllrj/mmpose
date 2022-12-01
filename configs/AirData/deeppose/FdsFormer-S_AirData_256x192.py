@@ -46,7 +46,7 @@ model = dict(
     pretrained='torchvision://resnet50',
     backbone=dict(type='ResNet', depth=50, num_stages=4, out_indices=(0, 1, 2, 3)),
     neck=dict(
-        type='FpCFormer',
+        type='FdsFormer',
         in_channels=[256,512,1024,2048],
         embed_dims=[256,512,1024,2048],
         num_layers=[1, 2, 4, 2],
@@ -56,12 +56,7 @@ model = dict(
         type='DeepposeRegressionHead',
         in_channels=2048,
         num_joints=channel_cfg['num_output_channels'],
-        loss_keypoint=dict(
-            type='RLELoss',
-            use_target_weight=True,
-            size_average=True,
-            residual=True),
-        out_sigma=True),
+        loss_keypoint=dict(type='SmoothL1Loss', use_target_weight=True)),
     train_cfg=dict(),
     test_cfg=dict(flip_test=True))
 
