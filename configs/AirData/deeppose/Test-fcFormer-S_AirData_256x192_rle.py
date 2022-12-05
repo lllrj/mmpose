@@ -28,8 +28,8 @@ lr_config = dict(
     warmup='linear',
     warmup_iters=500,
     warmup_ratio=0.001,
-    step=[5, 7])
-total_epochs = 10
+    step=[2, 4])
+total_epochs = 5
 channel_cfg = dict(
     num_output_channels=12,
     dataset_joints=12,
@@ -49,6 +49,7 @@ model = dict(
         type='FpCFormer',
         in_channels=[256,512,1024,2048],
         embed_dims=[256,512,1024,2048],
+        mlp_ratios=[4, 2, 2, 1],
         num_layers=[1, 2, 4, 2],
         return_map=True
     ),
@@ -132,10 +133,10 @@ test_pipeline = val_pipeline
 
 data_root = 'data/AirData'
 data = dict(
-    samples_per_gpu=12,
+    samples_per_gpu=16,
     workers_per_gpu=2,
-    val_dataloader=dict(samples_per_gpu=12),
-    test_dataloader=dict(samples_per_gpu=12),
+    val_dataloader=dict(samples_per_gpu=16),
+    test_dataloader=dict(samples_per_gpu=16),
     train=dict(
         type='AirDataset',
         ann_file=f'{data_root}/annotations/keypoints_train.json',
