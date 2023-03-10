@@ -22,9 +22,9 @@ class HRModule(BaseModule):
                  num_branches,
                  blocks,
                  num_blocks,
-                 in_channels,
+                 in_channels, # list
                  num_channels,
-                 multiscale_output=False,
+                 multiscale_output=False, # 实际默认为True
                  with_cp=False,
                  conv_cfg=None,
                  norm_cfg=dict(type='BN'),
@@ -78,7 +78,7 @@ class HRModule(BaseModule):
         downsample = None
         if stride != 1 or \
                 self.in_channels[branch_index] != \
-                num_channels[branch_index] * get_expansion(block):
+                num_channels[branch_index] * get_expansion(block): # 1 for ``BasicBlock`` and 4 for ``Bottleneck``.
             downsample = nn.Sequential(
                 build_conv_layer(
                     self.conv_cfg,
@@ -133,7 +133,7 @@ class HRModule(BaseModule):
         in_channels = self.in_channels
         fuse_layers = []
         num_out_branches = num_branches if self.multiscale_output else 1
-
+        # j为输入，i为输出，每个i实现一个branch的信息融合
         for i in range(num_out_branches):
             fuse_layer = []
             for j in range(num_branches):
@@ -158,7 +158,7 @@ class HRModule(BaseModule):
                     fuse_layer.append(None)
                 else:
                     conv_downsamples = []
-                    for k in range(i - j):
+                    for k in range(i - j): # 左右侧差了几层，流程为：从第j层下采样至j+1层，此时只减半H*W不改变C；由此逐步到i-1层后，再减半H*W，以及翻倍C
                         if k == i - j - 1:
                             conv_downsamples.append(
                                 nn.Sequential(
@@ -199,6 +199,7 @@ class HRModule(BaseModule):
         for i in range(self.num_branches):
             x[i] = self.branches[i](x[i])
 
+        # 此处融合
         x_fuse = []
         for i in range(len(self.fuse_layers)):
             y = 0
@@ -346,24 +347,25 @@ class HRNet(BaseBackbone):
         num_blocks = self.stage1_cfg['num_blocks'][0]
 
         block = self.blocks_dict[block_type]
-        stage1_out_channels = num_channels * get_expansion(block)
+                     # get_expansion() return int, 1 for BasicBlock, 4 for Bottleneck
+        stage1_out_channels = num_channels * get_expansion(block) # 4*64
         self.layer1 = self._make_layer(block, 64, stage1_out_channels,
                                        num_blocks)
 
         # stage 2
         self.stage2_cfg = self.extra['stage2']
-        num_channels = self.stage2_cfg['num_channels']
+        num_channels = self.stage2_cfg['num_channels'] # (32, 64)
         block_type = self.stage2_cfg['block']
 
         block = self.blocks_dict[block_type]
         num_channels = [
             channel * get_expansion(block) for channel in num_channels
-        ]
+        ] # (1*32, 1*64)
         self.transition1 = self._make_transition_layer([stage1_out_channels],
                                                        num_channels)
         self.stage2, pre_stage_channels = self._make_stage(
-            self.stage2_cfg, num_channels)
-
+            self.stage2_cfg, num_channels) # pre_stage_channels = the last module's inchannel or outchannel?
+        # def _make_stage(self, layer_config, in_channels, multiscale_output=True)
         # stage 3
         self.stage3_cfg = self.extra['stage3']
         num_channels = self.stage3_cfg['num_channels']
@@ -410,13 +412,17 @@ class HRNet(BaseBackbone):
     def _make_transition_layer(self, num_channels_pre_layer,
                                num_channels_cur_layer):
         """Make transition layer."""
-        num_branches_cur = len(num_channels_cur_layer)
-        num_branches_pre = len(num_channels_pre_layer)
-
+        # 一般来说num_cur = num_pre + 1 因为前一stage设计上就是比下一stage小一个分支
+        num_branches_cur = len(num_channels_cur_layer) # cur stage num of branches
+        num_branches_pre = len(num_channels_pre_layer) # pre stage num of branches
+        # print('----------------------------------------------------')
+        # print('num_channels_cur_layer = ', num_channels_cur_layer)
+        # print('----------------------------------------------------')
+        # print('num_channels_pre_layer = ', num_channels_pre_layer)
         transition_layers = []
         for i in range(num_branches_cur):
             if i < num_branches_pre:
-                if num_channels_cur_layer[i] != num_channels_pre_layer[i]:
+                if num_channels_cur_layer[i] != num_channels_pre_layer[i]:# 用于stage1到stage2 同一支通道不同的情况
                     transition_layers.append(
                         nn.Sequential(
                             build_conv_layer(
@@ -434,7 +440,7 @@ class HRNet(BaseBackbone):
                     transition_layers.append(None)
             else:
                 conv_downsamples = []
-                for j in range(i + 1 - num_branches_pre):
+                for j in range(i + 1 - num_branches_pre): # range(0, 1)
                     in_channels = num_channels_pre_layer[-1]
                     out_channels = num_channels_cur_layer[i] \
                         if j == i - num_branches_pre else in_channels
@@ -450,12 +456,15 @@ class HRNet(BaseBackbone):
                                 bias=False),
                             build_norm_layer(self.norm_cfg, out_channels)[1],
                             nn.ReLU(inplace=True)))
+                    # print('------------------------')
+                    # print('conv_downsamples:', conv_downsamples)
                 transition_layers.append(nn.Sequential(*conv_downsamples))
-
+        # print('------------------------')
+        # print('transition_layers = ', transition_layers)
         return nn.ModuleList(transition_layers)
 
     def _make_layer(self, block, in_channels, out_channels, blocks, stride=1):
-        """Make layer."""
+        """Make layer. 即stage1"""
         downsample = None
         if stride != 1 or in_channels != out_channels:
             downsample = nn.Sequential(
@@ -490,7 +499,10 @@ class HRNet(BaseBackbone):
         return nn.Sequential(*layers)
 
     def _make_stage(self, layer_config, in_channels, multiscale_output=True):
-        """Make stage."""
+        """Make stage.
+
+            return Sequential() of stage, last module in channels
+        """
         num_modules = layer_config['num_modules']
         num_branches = layer_config['num_branches']
         num_blocks = layer_config['num_blocks']
@@ -498,7 +510,7 @@ class HRNet(BaseBackbone):
         block = self.blocks_dict[layer_config['block']]
 
         hr_modules = []
-        for i in range(num_modules):
+        for i in range(num_modules): # stage1-4 : 1 1 4 2
             # multi_scale_output is only used for the last module
             if not multiscale_output and i == num_modules - 1:
                 reset_multiscale_output = False
@@ -510,7 +522,7 @@ class HRNet(BaseBackbone):
                     num_branches,
                     block,
                     num_blocks,
-                    in_channels,
+                    in_channels, # = stage_num_channels * getnum(block)
                     num_channels,
                     reset_multiscale_output,
                     with_cp=self.with_cp,
@@ -518,8 +530,11 @@ class HRNet(BaseBackbone):
                     conv_cfg=self.conv_cfg,
                     upsample_cfg=self.upsample_cfg))
 
-            in_channels = hr_modules[-1].in_channels
-
+            in_channels = hr_modules[-1].in_channels # list
+        # print('----------------------')
+        # print('make_stage:hr_modules[-1] = ', hr_modules[-1])
+        # print('----------------------')
+        # print('make_stage:in_channels = ', in_channels)
         return nn.Sequential(*hr_modules), in_channels
 
     def _freeze_stages(self):
@@ -575,7 +590,7 @@ class HRNet(BaseBackbone):
         x = self.layer1(x)
 
         x_list = []
-        for i in range(self.stage2_cfg['num_branches']):
+        for i in range(self.stage2_cfg['num_branches']): # range(0, 2)
             if self.transition1[i] is not None:
                 x_list.append(self.transition1[i](x))
             else:
@@ -583,15 +598,15 @@ class HRNet(BaseBackbone):
         y_list = self.stage2(x_list)
 
         x_list = []
-        for i in range(self.stage3_cfg['num_branches']):
+        for i in range(self.stage3_cfg['num_branches']): # range(0, 3)
             if self.transition2[i] is not None:
-                x_list.append(self.transition2[i](y_list[-1]))
+                x_list.append(self.transition2[i](y_list[-1])) # 理论上是pre_stage的最后一branch的输出作为输入，而实际代码实现为信息fusion后的上枝作为输入
             else:
                 x_list.append(y_list[i])
         y_list = self.stage3(x_list)
 
         x_list = []
-        for i in range(self.stage4_cfg['num_branches']):
+        for i in range(self.stage4_cfg['num_branches']): # range(0, 4)
             if self.transition3[i] is not None:
                 x_list.append(self.transition3[i](y_list[-1]))
             else:

@@ -11,7 +11,9 @@ from torch.nn.functional import pad
 
 from mmpose.registry import MODELS
 from .hrnet import Bottleneck, HRModule, HRNet
-
+from ..utils.mfm import (PatchEmbed, TCFormerDynamicBlock, TCFormerRegularBlock,
+                     TokenConv, cluster_dpc_knn, merge_tokens,
+                     tcformer_convert, token2map)
 
 def nlc_to_nchw(x, hw_shape):
     """Convert [N, L, C] shape tensor to [N, C, H, W] shape tensor.
@@ -379,7 +381,7 @@ class HRFormerBlock(BaseModule):
         """Forward function."""
         B, C, H, W = x.size()
         # Attention
-        x = x.view(B, C, -1).permute(0, 2, 1)
+        x = x.view(B, C, -1).permute(0, 2, 1) # 简单的划分为(B, N, C)
         x = x + self.drop_path(self.attn(self.norm1(x), H, W))
         # FFN
         x = x + self.drop_path(self.ffn(self.norm2(x), H, W))
@@ -426,12 +428,32 @@ class HRFomerModule(HRModule):
         init_cfg (dict or list[dict], optional): Initialization config dict.
             Default: None.
     """
-
+    """
+    HRFomerModule(
+                    num_branches,
+                    block,
+                    num_blocks,
+                    num_inchannels,
+                    num_channels,
+                    num_heads,
+                    num_window_sizes,
+                    num_mlp_ratios,
+                    reset_multiscale_output,
+                    drop_paths=drop_path_rates[num_blocks[0] *
+                                               i:num_blocks[0] * (i + 1)],
+                    with_rpe=self.with_rpe,
+                    with_pad_mask=self.with_pad_mask,
+                    conv_cfg=self.conv_cfg,
+                    norm_cfg=self.norm_cfg,
+                    transformer_norm_cfg=self.transformer_norm_cfg,
+                    with_cp=self.with_cp,
+                    upsample_cfg=self.upsample_cfg)
+    """
     def __init__(self,
                  num_branches,
                  block,
                  num_blocks,
-                 num_inchannels,
+                 num_inchannels, # in_channels
                  num_channels,
                  num_heads,
                  num_window_sizes,
@@ -534,7 +556,7 @@ class HRFomerModule(HRModule):
                 else:
                     conv3x3s = []
                     for k in range(i - j):
-                        if k == i - j - 1:
+                        if k == i - j - 1: # 相邻branch
                             num_outchannels_conv3x3 = num_inchannels[i]
                             with_out_act = False
                         else:
@@ -686,6 +708,7 @@ class HRFormer(HRNet):
             dict(type='Normal', std=0.001, layer=['Conv2d']),
             dict(type='Constant', val=1, layer=['_BatchNorm', 'GroupNorm'])
         ],
+        sample_ratios=[0.25, 0.25, 0.25],
     ):
 
         # stochastic depth
@@ -714,6 +737,42 @@ class HRFormer(HRNet):
 
         super().__init__(extra, in_channels, conv_cfg, norm_cfg, norm_eval,
                          with_cp, zero_init_residual, frozen_stages, init_cfg)
+    def _make_transition_layer(self, num_channels_pre_layer,
+                               num_channels_cur_layer):
+        """Make transition layer."""
+        # 一般来说num_cur = num_pre + 1 因为前一stage设计上就是比下一stage小一个分支
+        num_branches_cur = len(num_channels_cur_layer) # cur stage num of branches
+        num_branches_pre = len(num_channels_pre_layer) # pre stage num of branches
+        transition_layers = []
+        for i in range(num_branches_cur):
+            if i < num_branches_pre:
+                if num_channels_cur_layer[i] != num_channels_pre_layer[i]:# 用于stage1到stage2 同一支通道不同的情况
+                    transition_layers.append(
+                        nn.Sequential(
+                            build_conv_layer(
+                                self.conv_cfg,
+                                num_channels_pre_layer[i],
+                                num_channels_cur_layer[i],
+                                kernel_size=3,
+                                stride=1,
+                                padding=1,
+                                bias=False),
+                            build_norm_layer(self.norm_cfg,
+                                             num_channels_cur_layer[i])[1],
+                            nn.ReLU(inplace=True)))
+                else:
+                    transition_layers.append(None)
+            else:
+                conv_downsamples = []
+                for j in range(i + 1 - num_branches_pre): # range(0, 1)
+                    in_channels = num_channels_pre_layer[-1]
+                    out_channels = num_channels_cur_layer[i] \
+                        if j == i - num_branches_pre else in_channels
+                    conv_downsamples.append(
+                            CTM(sample_ratios[i - 1], num_channels_cur_layer[i-1], num_channels_cur_layer[i])
+                        )
+                transition_layers.append(nn.Sequential(*conv_downsamples))
+        return nn.ModuleList(transition_layers)
 
     def _make_stage(self,
                     layer_config,
@@ -760,3 +819,115 @@ class HRFormer(HRNet):
                     upsample_cfg=self.upsample_cfg))
             num_inchannels = modules[-1].get_num_inchannels()
         return nn.Sequential(*modules), num_inchannels
+
+    def forward(self, x):
+        """Forward function."""
+        # init token dict
+        x = self.conv1(x)
+        x = self.norm1(x)
+        x = self.relu(x)
+        x = self.conv2(x)
+        x = self.norm2(x)
+        x = self.relu(x)
+        x = self.layer1(x)
+
+        # init token dict
+        B, C, H, W = x.size()
+        x = nchw_to_nlc(x)  
+        B, N, _ = x.shape
+        device = x.device
+        idx_token = torch.arange(N)[None, :].repeat(B, 1).to(device) # 初始化，自己的父节点是自己
+        agg_weight = x.new_ones(B, N, 1)
+        token_dict = {
+            'x': x, # token
+            'token_num': N,
+            'map_size': [H, W], # a stable list
+            'init_grid_size': [H, W], # a stable list
+            'idx_token': idx_token, # each stage's cluster center index of each token
+            'agg_weight': agg_weight # each stage's weight
+        }
+
+        x_list = []
+        for i in range(self.stage2_cfg['num_branches']): # range(0, 2)
+            if self.transition1[i] is not None:
+                x_list.append(self.transition1[i](x))
+            else:
+                x_list.append(x)
+        y_list = self.stage2(x_list)
+
+        x_list = []
+        for i in range(self.stage3_cfg['num_branches']): # range(0, 3)
+            if self.transition2[i] is not None:
+                x_list.append(self.transition2[i](y_list[-1])) # 理论上是pre_stage的最后一branch的输出作为输入，而实际代码实现为信息fusion后的上枝作为输入
+            else:
+                x_list.append(y_list[i])
+        y_list = self.stage3(x_list)
+
+        x_list = []
+        for i in range(self.stage4_cfg['num_branches']): # range(0, 4)
+            if self.transition3[i] is not None:
+                x_list.append(self.transition3[i](y_list[-1]))
+            else:
+                x_list.append(y_list[i])
+        y_list = self.stage4(x_list)
+
+        return tuple(y_list)
+class CTM(nn.Module):
+    """Clustering-based Token Merging module in TCFormer.
+
+    Args:
+        sample_ratio (float): The sample ratio of tokens.
+        embed_dim (int): Input token feature dimension.
+        dim_out (int): Output token feature dimension.
+        k (int): number of the nearest neighbor used i DPC-knn algorithm.
+
+    return:
+        donw_dict:tuple(dict_new ,dict_old).
+        dict_ has same attribute at token_dict in TCFormer
+        dict_new['token_num'] = 0.25(ratio) * dict_old['token_num']
+    """
+
+    def __init__(self, sample_ratio, embed_dim, dim_out, k=5):
+        super().__init__()
+        self.sample_ratio = sample_ratio
+        self.dim_out = dim_out
+        self.conv = TokenConv(
+            in_channels=embed_dim,
+            out_channels=dim_out,
+            stride=2,
+            padding=1)
+        # self.conv = nn.Conv1d(
+        #     in_channels=embed_dim,
+        #     out_channels=dim_out,
+        #     kernel_size=1,
+        #     bias=False)
+        self.norm = nn.LayerNorm(self.dim_out)
+        self.score = nn.Linear(self.dim_out, 1)
+        self.k = k
+
+    def forward(self, token_dict):
+        token_dict = token_dict.copy()
+        x = self.conv(token_dict)
+        # x = token_dict['x']
+        # x = self.conv(x.permute(0, 2, 1)).permute(0, 2, 1)
+        x = self.norm(x)
+        token_score = self.score(x)
+        token_weight = token_score.exp()
+
+        token_dict['x'] = x
+        B, N, C = x.shape
+        token_dict['token_score'] = token_score
+
+        cluster_num = max(math.ceil(N * self.sample_ratio), 1)
+        # 得到每个token同簇的中心tokenidx，idx_cluster (Tensor[B, N])数组含类似于并查集中的父节点
+        idx_cluster, cluster_num = cluster_dpc_knn(token_dict, cluster_num,
+                                                   self.k) 
+        down_dict = merge_tokens(token_dict, idx_cluster, cluster_num,
+                                 token_weight)
+
+        H, W = token_dict['map_size']
+        H = math.floor((H - 1) / 2 + 1)
+        W = math.floor((W - 1) / 2 + 1)
+        down_dict['map_size'] = [H, W]
+
+        return down_dict, token_dict

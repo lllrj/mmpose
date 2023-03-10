@@ -58,7 +58,7 @@ def main(args):
         draw_gt=False,
         draw_bbox=True,
         draw_heatmap=args.draw_heatmap,
-        show=True,
+        show=False,
         out_file=args.out_file)
 
 
