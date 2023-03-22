@@ -253,15 +253,15 @@ class TCFormer(nn.Module):
         # init token dict
         B, N, _ = x.shape
         device = x.device
-        idx_token = torch.arange(N)[None, :].repeat(B, 1).to(device)
+        idx_token = torch.arange(N)[None, :].repeat(B, 1).to(device) # 初始化，自己的父节点是自己
         agg_weight = x.new_ones(B, N, 1)
         token_dict = {
-            'x': x,
+            'x': x, # token
             'token_num': N,
-            'map_size': [H, W],
-            'init_grid_size': [H, W],
-            'idx_token': idx_token,
-            'agg_weight': agg_weight
+            'map_size': [H, W], # a stable list
+            'init_grid_size': [H, W], # a stable list
+            'idx_token': idx_token, # each stage's cluster center index of each token
+            'agg_weight': agg_weight # each stage's weight
         }
         outs.append(token_dict.copy())
 

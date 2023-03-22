@@ -7,7 +7,7 @@ from .realnvp import RealNVP
 from .smpl import SMPL
 from .tcformer_utils import (TCFormerDynamicBlock, TCFormerRegularBlock,
                              TokenConv, cluster_dpc_knn, merge_tokens,
-                             token2map, token_interp)
+                             token2map, token_interp, map2token)
 from .transformer import PatchEmbed, PatchMerging, nchw_to_nlc, nlc_to_nchw
 
 __all__ = [
@@ -15,5 +15,5 @@ __all__ = [
     'PatchMerging', 'batch_rodrigues', 'quat_to_rotmat', 'rot6d_to_rotmat',
     'resize', 'RealNVP', 'torch_meshgrid_ij', 'token2map', 'TokenConv',
     'TCFormerRegularBlock', 'TCFormerDynamicBlock', 'cluster_dpc_knn',
-    'merge_tokens', 'token_interp', 'tcformer_convert'
+    'merge_tokens', 'token_interp', 'tcformer_convert', 'map2token'
 ]

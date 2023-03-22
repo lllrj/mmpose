@@ -6,7 +6,7 @@ import numpy as np
 import torch
 import torch.distributed as dist
 from mmcv.parallel import MMDataParallel, MMDistributedDataParallel
-from mmcv.runner import (DistSamplerSeedHook, EpochBasedRunner, OptimizerHook,
+from mmcv.runner import (DistSamplerSeedHook, EpochBasedRunner, OptimizerHook,build_runner,
                          get_dist_info)
 from mmcv.utils import digit_version
 
@@ -143,13 +143,29 @@ def train_model(model,
 
     # build runner
     optimizer = build_optimizers(model, cfg.optimizer)
-
     runner = EpochBasedRunner(
         model,
         optimizer=optimizer,
         work_dir=cfg.work_dir,
         logger=logger,
         meta=meta)
+    # if cfg.runner == None:
+    #     runner = EpochBasedRunner(
+    #         model,
+    #         optimizer=optimizer,
+    #         work_dir=cfg.work_dir,
+    #         logger=logger,
+    #         meta=meta)
+    # else:
+    #     runner = build_runner(
+    #     cfg.runner,
+    #     default_args=dict(
+    #         model=model,
+    #         batch_processor=None,
+    #         optimizer=optimizer,
+    #         work_dir=cfg.work_dir,
+    #         logger=logger,
+    #         meta=meta))
     # an ugly workaround to make .log and .log.json filenames the same
     runner.timestamp = timestamp
 
@@ -211,3 +227,8 @@ def train_model(model,
     elif cfg.load_from:
         runner.load_checkpoint(cfg.load_from)
     runner.run(data_loaders, cfg.workflow, cfg.total_epochs)
+    # change by llllrj
+    # if cfg.runner == None:
+    #     runner.run(data_loaders, cfg.workflow, cfg.total_epochs)
+    # else:
+    #     runner.run(data_loaders, cfg.workflow, cfg.total_iters)

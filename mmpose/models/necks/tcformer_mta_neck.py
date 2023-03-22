@@ -56,6 +56,18 @@ class MTA(BaseModule):
         use_sr_conv (bool): If True, use a conv layer for spatial reduction.
             If False, use a pooling process for spatial reduction. Defaults:
             False.
+
+    args example:
+        neck=dict(
+        type='MTA',
+        in_channels=[64, 128, 320, 512],
+        out_channels=256,
+        start_level=0,
+        num_heads=[4, 4, 4, 4],
+        mlp_ratios=[4, 4, 4, 4],
+        num_outs=4,
+        use_sr_conv=False,
+    )
     """
 
     def __init__(
@@ -86,7 +98,7 @@ class MTA(BaseModule):
         assert isinstance(in_channels, list)
         self.in_channels = in_channels
         self.out_channels = out_channels
-        self.num_ins = len(in_channels)
+        self.num_ins = len(in_channels) # = 4
         self.num_outs = num_outs
         self.no_norm_on_lateral = no_norm_on_lateral
         self.fp16_enabled = False
@@ -96,15 +108,15 @@ class MTA(BaseModule):
         self.mlp_ratios = mlp_ratios
 
         if end_level == -1 or end_level == self.num_ins - 1:
-            self.backbone_end_level = self.num_ins
+            self.backbone_end_level = self.num_ins # = 4
             assert num_outs >= self.num_ins - start_level
         else:
             # if end_level is not the last level, no extra level is allowed
             self.backbone_end_level = end_level + 1
             assert end_level < self.num_ins
             assert num_outs == end_level - start_level + 1
-        self.start_level = start_level
-        self.end_level = end_level
+        self.start_level = start_level # = 0
+        self.end_level = end_level # = -1
 
         self.lateral_convs = nn.ModuleList()
         self.merge_blocks = nn.ModuleList()
@@ -115,10 +127,10 @@ class MTA(BaseModule):
                 out_channels,
                 1,
                 conv_cfg=conv_cfg,
-                norm_cfg=norm_cfg if not self.no_norm_on_lateral else None,
+                norm_cfg=norm_cfg if not self.no_norm_on_lateral else None, # norm_cfg
                 act_cfg=act_cfg,
                 inplace=False)
-            self.lateral_convs.append(l_conv)
+            self.lateral_convs.append(l_conv) # 1x1卷积
 
         for i in range(self.start_level, self.backbone_end_level - 1):
             merge_block = TCFormerDynamicBlock(
@@ -181,16 +193,16 @@ class MTA(BaseModule):
         """Forward function."""
         assert len(inputs) == len(self.in_channels)
 
-        # build lateral tokens
+        # build lateral tokens; 使所有stage下的token保持同一out_channel
         input_dicts = []
-        for i, lateral_conv in enumerate(self.lateral_convs):
-            tmp = inputs[i + self.start_level].copy()
+        for i, lateral_conv in enumerate(self.lateral_convs): # lateral_convs = nn.ModuleList()
+            tmp = inputs[i + self.start_level].copy() # copy input token_dict
             tmp['x'] = lateral_conv(tmp['x'].unsqueeze(2).permute(
-                0, 3, 1, 2)).permute(0, 2, 3, 1).squeeze(2)
+                0, 3, 1, 2)).permute(0, 2, 3, 1).squeeze(2) # change tokens channel to the out_channel
             input_dicts.append(tmp)
 
-        # merge from high level to low level
-        for i in range(len(input_dicts) - 2, -1, -1):
+        # merge from high level to low level; 融合不同stage下的token
+        for i in range(len(input_dicts) - 2, -1, -1): # 2, 1, 0
             input_dicts[i]['x'] = input_dicts[i]['x'] + token_interp(
                 input_dicts[i], input_dicts[i + 1])
             input_dicts[i] = self.merge_blocks[i](input_dicts[i])
@@ -200,7 +212,7 @@ class MTA(BaseModule):
 
         # part 2: add extra levels
         used_backbone_levels = len(outs)
-        if self.num_outs > len(outs):
+        if self.num_outs > len(outs): # num_outs = 4, out = 4
             # use max pool to get more levels on top of outputs
             if not self.add_extra_convs:
                 for i in range(self.num_outs - used_backbone_levels):

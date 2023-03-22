@@ -60,7 +60,7 @@ class RLELoss(nn.Module):
         pred = output[:, :, :2]
         sigma = output[:, :, 2:4].sigmoid()
 
-        error = (pred - target) / (sigma + 1e-9)
+        error = (pred - target) / (sigma + 1e-5)# pre = 1e-9
         # (B, K, 2)
         log_phi = self.flow_model.log_prob(error.reshape(-1, 2))
         log_phi = log_phi.reshape(target.shape[0], target.shape[1], 1)

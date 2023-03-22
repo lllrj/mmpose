@@ -50,7 +50,7 @@ model = dict(
             residual=True),
         out_sigma=True),
     train_cfg=dict(),
-    test_cfg=dict(flip_test=True))
+    test_cfg=dict(flip_test=True, regression_flip_shift=True))
 
 data_cfg = dict(
     image_size=[192, 256],
