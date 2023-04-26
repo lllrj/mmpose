@@ -931,3 +931,23 @@ class CTM(nn.Module):
         down_dict['map_size'] = [H, W]
 
         return down_dict, token_dict
+        
+class UFM(nn.Module):
+    """Upsample feature fusion module
+    由pre上采样到cur的模块
+    Args:
+        pre token_dict
+        cur token_dict
+    return:
+        the new token after upsample fusing
+    """
+    def __init__(self, pre, cur):
+        self.pre = pre
+        self.cur = cur
+    def forward(self, input_dict):
+        x = input_dict['x']
+        # merge from high level to low level; 融合不同stage下的token
+        for i in range(len(input_dicts) - 2, -1, -1): # 2, 1, 0
+            input_dicts[i]['x'] = input_dicts[i]['x'] + token_interp(
+                input_dicts[i], input_dicts[i + 1])
+            input_dicts[i] = self.merge_blocks[i](input_dicts[i])
